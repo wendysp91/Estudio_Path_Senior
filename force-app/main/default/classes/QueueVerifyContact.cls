@@ -13,7 +13,7 @@ public with sharing class QueueVerifyContact implements Queueable {
         EventBus.publish(event);
 
         // Enviar email resumen de resultados
-        System.debug('Queueable Job executed for ' + contacts.size() + ' contacts.');
+        System.debug(LoggingLevel.DEBUG, 'Queueable Job executed for ' + contacts.size() + ' contacts.');
         Messaging.SingleEmailMessage email = new Messaging.SingleEmailMessage();
         email.setToAddresses(new String[] { 'admin@example.com' });
         email.setSubject('Resumen de Verificación de Contactos');

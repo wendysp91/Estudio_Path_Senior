@@ -1,9 +1,9 @@
 public with sharing class SyncFinalizer implements Finalizer {
     public void execute(FinalizerContext ctx) {
-        System.debug('Finalizer executed.');
+        System.debug(LoggingLevel.DEBUG, 'Finalizer executed.');
         if (ctx.getResult() == ParentJobResult.UNHANDLED_EXCEPTION) {
             Exception e = ctx.getException();
-            System.debug('Unhandled exception occurred: ' + e.getMessage());
+            System.debug(LoggingLevel.ERROR, 'Unhandled exception occurred: ' + e.getMessage());
             // loggear el error, notificar, re-encolar si aplica
             Integration_Error__c errorRecord = new Integration_Error__c(
                 Name = 'BatchVerifyContact Failure',

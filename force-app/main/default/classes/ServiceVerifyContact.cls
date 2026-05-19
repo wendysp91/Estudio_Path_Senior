@@ -4,9 +4,10 @@ public with sharing class ServiceVerifyContact {
         try {
             // Prepare the HTTP request
             HttpRequest req = new HttpRequest();
-            req.setEndpoint('https://api.emailverification.com/verify');
+            //req.setEndpoint('https://api.emailverification.com/verify');
+            req.setEndpoint('callout:EmailVerificationAPI/verify');
             req.setMethod('GET');
-            req.setHeader('Authorization', 'Bearer your_api_key_here');
+            //req.setHeader('Authorization', 'Bearer your_api_key_here');
             req.setBody(JSON.serialize(email));
             Http http = new Http();
             HttpResponse res = http.send(req);
@@ -19,10 +20,10 @@ public with sharing class ServiceVerifyContact {
                     result.put(emailAddr, status);
                 }
             } else {
-                System.debug('Email verification failed for: ' + email);
+                System.debug(LoggingLevel.WARN, 'Email verification failed for: ' + email);
             }
         } catch (Exception e) {
-            System.debug('Error during email verification callout: ' + e.getMessage());
+            System.debug(LoggingLevel.ERROR, 'Error during email verification callout: ' + e.getMessage());
             //System.attachFinalizer(new SyncFinalizer());
             Integration_Error__c errorRecord = new Integration_Error__c(
                 Name = 'BatchVerifyContact Failure',

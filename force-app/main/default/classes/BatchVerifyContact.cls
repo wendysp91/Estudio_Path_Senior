@@ -30,7 +30,7 @@ public class BatchVerifyContact implements Database.Batchable<SObject>, Database
     }
     
     public void finish(Database.BatchableContext BC){
-        System.debug('Total Records Processed: ' + totalRecordsProcessed);
+        System.debug(LoggingLevel.DEBUG, 'Total Records Processed: ' + totalRecordsProcessed);
         System.enqueueJob(new QueueVerifyContact(processedContacts));
     }
 

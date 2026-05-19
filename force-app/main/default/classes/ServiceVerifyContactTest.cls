@@ -18,9 +18,9 @@ public class ServiceVerifyContactTest {
         Test.stopTest();
 
         // Verifica resultados
-        System.assertEquals(2, result.size());
-        System.assertEquals('verified', result.get('mengana@emailin.com'));
-        System.assertEquals('not verified', result.get('fulana@emailin.com'));
+        System.assertEquals(2, result.size(), 'El mapa debe tener 2 resultados');
+        System.assertEquals('verified', result.get('mengana@emailin.com'), 'mengana debe estar verificada');
+        System.assertEquals('not verified', result.get('fulana@emailin.com'), 'fulana no debe estar verificada');
     }
 
     @isTest
@@ -34,7 +34,7 @@ public class ServiceVerifyContactTest {
         Test.stopTest();
 
         // Verifica que el resultado esté vacío y se haya insertado un error
-        System.assertEquals(0, result.size());
+        System.assertEquals(0, result.size(), 'El resultado debe estar vacío cuando falla el callout');
         List<Integration_Error__c> errors = [SELECT Id FROM Integration_Error__c WHERE Name = 'BatchVerifyContact Failure'];
         System.assert(!errors.isEmpty(), 'Debe haberse insertado un registro de error');
     }
