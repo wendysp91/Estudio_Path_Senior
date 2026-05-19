@@ -1,16 +1,15 @@
 public with sharing class ServiceVerifyContact {
     public Map<String, String> makeCallout(List<String> email){
-        List<Contact> verifiedContacts = new List<Contact>();
         Map<String, String> result = new Map<String, String>();
         try {
             // Prepare the HTTP request
-            RestRequest req = new RestRequest();
-            req.requestUri = 'https://api.emailverification.com/verify?email=';
-            req.httpMethod = 'GET';
-            req.addHeader('Authorization', 'Bearer your_api_key_here');
-            req.requestBody = JSON.serialize(email);
-            req.send();
-            RestResponse res = req.getResponse();
+            HttpRequest req = new HttpRequest();
+            req.setEndpoint('https://api.emailverification.com/verify');
+            req.setMethod('GET');
+            req.setHeader('Authorization', 'Bearer your_api_key_here');
+            req.setBody(JSON.serialize(email));
+            Http http = new Http();
+            HttpResponse res = http.send(req);
             if(res.getStatusCode() == 200){
                 Map<String, Object> responseMap = (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
                 List<Map<String, String>> emailList = (List<Map<String, String>>) responseMap.get('emailList');
@@ -24,7 +23,14 @@ public with sharing class ServiceVerifyContact {
             }
         } catch (Exception e) {
             System.debug('Error during email verification callout: ' + e.getMessage());
-            System.attachFinalizer(new SyncFinalizer());
+            //System.attachFinalizer(new SyncFinalizer());
+            Integration_Error__c errorRecord = new Integration_Error__c(
+                Name = 'BatchVerifyContact Failure',
+                Error_Message__c = e.getMessage(),
+                Stack_Trace__c = e.getStackTraceString(),
+                Job_Type__c = 'BatchVerifyContact'
+            );
+            insert errorRecord;
         }
         return result;
     }

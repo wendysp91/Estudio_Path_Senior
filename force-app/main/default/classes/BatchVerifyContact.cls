@@ -1,6 +1,7 @@
-public class BatchVerifyContact implements Database.Batchable<SObject>, Database.Stateful {
+public class BatchVerifyContact implements Database.Batchable<SObject>, Database.Stateful, Database.AllowsCallouts {
 
     public integer totalRecordsProcessed = 0;
+    public List<Contact> processedContacts = new List<Contact>();
 
     public QueryLocator start(Database.BatchableContext BC) {
         return Database.getQueryLocator('SELECT Id, Email FROM Contact WHERE Email_Verified__c = false');
@@ -9,24 +10,28 @@ public class BatchVerifyContact implements Database.Batchable<SObject>, Database
     public void execute(Database.BatchableContext BC, List<Contact> scope){
         List<Contact> contactsToUpdate = new List<Contact>();
         List<String> emailsToVerify = new List<String>();
-        for(Contact con : scope){
+        Map<String, Contact> emailToContact = new Map<String, Contact>();
+        for (Contact con : scope) {
+            emailToContact.put(con.Email, con);
             emailsToVerify.add(con.Email);
         }
 
         List<Contact> verifiedContacts = verifyEmail(emailsToVerify);
-        if(!verifiedContacts.isEmpty()){
-            for(Contact con : verifiedContacts){
-                con.Email_Verified__c = true;
-                contactsToUpdate.add(con);
+        for (Contact contactEmailAddr : verifiedContacts) {
+            if (emailToContact.containsKey(contactEmailAddr.Email)) {
+                Contact c = emailToContact.get(contactEmailAddr.Email);
+                c.Email_Verified__c = true;
+                contactsToUpdate.add(c);
             }
         }
         update contactsToUpdate;
         totalRecordsProcessed += scope.size();
+        processedContacts.addAll(verifiedContacts);
     }
     
     public void finish(Database.BatchableContext BC){
         System.debug('Total Records Processed: ' + totalRecordsProcessed);
-        System.enqueueJob(new QueueVerifyContact(contacts));
+        System.enqueueJob(new QueueVerifyContact(processedContacts));
     }
 
     private List<Contact> verifyEmail(List<String> email){
