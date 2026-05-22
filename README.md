@@ -8,6 +8,8 @@ Ejercicios del temario **Path to Senior** sobre Apex asíncrono, manejo de error
 
 - [Ejercicio 1.1 — Sistema de Verificación de Emails](#ejercicio-11--sistema-de-verificación-de-emails)
 - [Ejercicio 1.2 — Corrección de Governor Limits](#ejercicio-12--corrección-de-governor-limits)
+- [Ejercicio 1.3 — Refactoring de Trigger con patrón Kevin O'Hara](#ejercicio-13--refactoring-de-trigger-con-patrón-kevin-ohara)
+- [Ejercicio 1.4 — GenericUpsertService con Schema Describe dinámico](#ejercicio-14--genericupsertservice-con-schema-describe-dinámico)
 - [Ejercicio 1.5 — Manejo de Errores en Procesos Asíncronos](#ejercicio-15--manejo-de-errores-en-procesos-asíncronos)
 - [Ejercicio 1.6 — Lead Enrichment con Dependency Injection](#ejercicio-16--lead-enrichment-con-dependency-injection)
 - [Ejercicio 1.7 — Sistema de Acceso Regional](#ejercicio-17--sistema-de-acceso-regional)
@@ -89,6 +91,121 @@ El código original tenía múltiples problemas: SOQL construidos incorrectament
 | Clase | Rol |
 |---|---|
 | `LimitErrorCorrection` | Versión de trabajo del procesador de órdenes con los límites corregidos. |
+
+---
+
+## Ejercicio 1.3 — Refactoring de Trigger con patrón Kevin O'Hara
+
+### Orden del ejercicio
+
+Dado un `OpportunityTrigger` con toda la lógica incrustada, identificar los problemas de diseño y refactorizarlo aplicando el patrón Kevin O'Hara: trigger delgado, clase base `TriggerHandler` con dispatcher, handler específico con bypass de migración, y detección bulk-safe de cambio de Stage.
+
+### Qué hace
+
+El trigger original mezclaba lógica de `before` y `after` en un mismo loop sin guardas de contexto, ejecutaba asignaciones de campo en el contexto `after` (donde `Trigger.new` es read-only), detectaba el cambio de Closed Won en `before update` en lugar de `after update`, y no tenía mecanismo de bypass para migraciones. La versión refactorizada encapsula todo en un handler con responsabilidades claras por método.
+
+### Arquitectura
+
+```
+OpportunityTrigger (thin — 1 línea)
+    └── OpportunityTriggerHandler extends TriggerHandler
+            ├── beforeInsert()  → setDefaults()
+            ├── afterInsert()   → OpportunityService.syncToERP()  [bypass: skipSyncToERP]
+            └── afterUpdate()   → filterNewlyClosedWon() → notifyClosedWon()
+
+TriggerHandler (base class Kevin O'Hara)
+    ├── run() → switch on Trigger.operationType
+    └── bypass(handlerName) / clearBypass() / isBypassed()  [bypass global por handler]
+```
+
+### Problemas corregidos
+
+| # | Problema original | Corrección |
+|---|---|---|
+| 1 | Toda la lógica en el trigger | Movida a `OpportunityTriggerHandler` |
+| 2 | Loop corre en los 4 eventos sin guardas de contexto | `switch on Trigger.operationType` en `TriggerHandler.run()` |
+| 3 | Asignaciones de campo ejecutadas en `after insert` (read-only) | `setDefaults()` solo en `beforeInsert()` |
+| 4 | Detección de Closed Won en `before update` | Movida a `afterUpdate()` |
+| 5 | Sin bulk-safe collection para notificación | `filterNewlyClosedWon()` devuelve lista, nunca opera row-by-row |
+| 6 | Sin bypass para migraciones | `skipSyncToERP` (granular) + `TriggerHandler.bypass()` (global) |
+| 7 | `Stage__c` en insert vs `StageName` en update (campos distintos) | Unificado a `StageName` |
+
+### Bypass de migración
+
+```apex
+// Saltar solo syncToERP (setDefaults sigue corriendo)
+OpportunityTriggerHandler.skipSyncToERP = true;
+insert migrationRecords;
+OpportunityTriggerHandler.skipSyncToERP = false;
+
+// Saltar el handler completo
+TriggerHandler.bypass('OpportunityTriggerHandler');
+insert migrationRecords;
+TriggerHandler.clearBypass('OpportunityTriggerHandler');
+```
+
+### Clases
+
+| Clase | Rol |
+|---|---|
+| `TriggerHandler` | Clase base genérica. Dispatcher por `operationType`, API de bypass estático. |
+| `OpportunityTriggerHandler` | Lógica específica de `Opportunity`. Extiende `TriggerHandler`. |
+| `OpportunityService` | Stub del servicio de integración ERP. |
+
+---
+
+## Ejercicio 1.4 — GenericUpsertService con Schema Describe dinámico
+
+### Orden del ejercicio
+
+Construir un servicio genérico que recibe el nombre de cualquier SObject, un campo external ID y una lista de payloads `Map<String, Object>`, y realiza un upsert dinámico validando objeto y campos mediante Schema Describe antes de tocar ningún dato. Manejar errores parciales con `Database.upsert(records, false)` sin cancelar el lote completo.
+
+### Qué hace
+
+El servicio resuelve el tipo de objeto en runtime, construye los SObjects usando `put()` ignorando silenciosamente los campos que no existen o no son editables, consulta registros existentes con `queryWithBinds` en `USER_MODE` antes del upsert (respetando FLS y sharing), y loggea cada fallo de DML con su error detallado sin propagar la excepción.
+
+### Arquitectura
+
+```
+GenericUpsertService.upsertRecords(objectName, externalIdField, payloads)
+    ├── Schema.getGlobalDescribe().get(objectName)      → valida objeto
+    ├── fieldMap.get(externalIdField.toLowerCase())      → valida external ID field
+    ├── logPreUpsertSummary()
+    │       └── Database.queryWithBinds(..., USER_MODE) → pre-check registros existentes
+    ├── buildRecords()
+    │       ├── fieldMap.get(key) == null  → skip + WARN (campo inexistente)
+    │       ├── !isCreateable && !isUpdateable → skip + WARN (campo no editable)
+    │       └── sObjType.newSObject() + record.put(dfr.getName(), value)
+    └── Database.upsert(records, extIdToken, false)     → allOrNone = false
+            └── logFailures() → ERROR por cada UpsertResult fallido
+```
+
+### Conceptos demostrados
+
+- `Schema.getGlobalDescribe()` para resolución dinámica de objetos en runtime
+- `DescribeSObjectResult.fields.getMap()` + `DescribeFieldResult` para validación de campos
+- `isCreateable()` / `isUpdateable()` como filtro de campos no editables (sistema, formula, etc.)
+- `SObjectType.newSObject()` + `SObject.put()` para construcción dinámica
+- `Database.queryWithBinds(query, binds, AccessLevel.USER_MODE)` — FLS y sharing en queries dinámicas
+- `Database.upsert(records, Schema.SObjectField, false)` — partial success con external ID dinámico
+- `Database.UpsertResult[]` — iteración de errores sin propagación de excepción
+
+### Clases
+
+| Clase | Rol |
+|---|---|
+| `GenericUpsertService` | Servicio principal. Valida, construye y hace upsert de cualquier SObject. |
+| `GenericUpsertServiceTest` | 5 tests: campo inexistente, no editable, error parcial, objeto inválido, external ID inválido. |
+
+### Cobertura de tests
+
+| Test | Escenario | Mecanismo |
+|---|---|---|
+| `testNonExistentFieldIsIgnored` | Clave del payload no existe en `fieldMap` | `BogusFieldXYZ__xyz` → skip silencioso |
+| `testNonEditableFieldIsIgnored` | Campo existe pero `isCreateable=false` y `isUpdateable=false` | `CreatedDate` → skip silencioso |
+| `testPartialFailureIsLoggedWithoutCancellingOthers` | Un registro falla, el otro se commitea | `Name` de 256 chars → `STRING_TOO_LONG` en DML |
+| `testInvalidObjectThrowsUpsertException` | Objeto no existe en el org | `Schema.getGlobalDescribe().get(...)` retorna null |
+| `testInvalidExternalIdFieldThrowsUpsertException` | External ID field no existe en el objeto | `fieldMap.get(...)` retorna null |
 
 ---
 
